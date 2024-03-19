@@ -89,6 +89,60 @@ impl TransportState {
         }
     }
 
+    /// Encrypt a message in-place from the plaintext in `buffer`, calculating a
+    /// detached authentication tag using the optional additional data in `authtext`.
+    ///
+    /// Returns the detached authentication tag, which should usually be put
+    /// immediately after the resulting ciphertext in `buffer`.
+    ///
+    /// # Errors
+    ///
+    /// Will result in `Error::Input` if the size of the output exceeds the max message
+    /// length in the Noise Protocol (65535 bytes).
+    pub fn write_message_in_place_detached(
+        &mut self,
+        authtext: &[u8],
+        buffer: &mut [u8],
+    ) -> Result<[u8; TAGLEN], Error> {
+        if !self.initiator && self.pattern.is_oneway() {
+            return Err(StateProblem::OneWay.into());
+        } else if buffer.len() + TAGLEN > MAXMSGLEN {
+            return Err(Error::Input);
+        }
+
+        let cipher =
+            if self.initiator { &mut self.cipherstates.0 } else { &mut self.cipherstates.1 };
+        cipher.encrypt_ad_in_place(authtext, buffer)
+    }
+
+    /// Decrypt a noise message in-place in `buffer`, checking against the
+    /// detached authentication tag using the optional additional data in
+    /// `authtext`.
+    ///
+    /// # Errors
+    /// Will result in `Error::Input` if the message is more than 65535 bytes.
+    ///
+    /// Will result in `Error::Decrypt` if the contents couldn't be decrypted and/or the
+    /// authentication tag didn't verify.
+    ///
+    /// Will result in `StateProblem::Exhausted` if the max nonce overflows.
+    pub fn read_message_in_place_detached(
+        &mut self,
+        authtext: &[u8],
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error> {
+        if buffer.len() > MAXMSGLEN {
+            Err(Error::Input)
+        } else if self.initiator && self.pattern.is_oneway() {
+            Err(StateProblem::OneWay.into())
+        } else {
+            let cipher =
+                if self.initiator { &mut self.cipherstates.1 } else { &mut self.cipherstates.0 };
+            cipher.decrypt_ad_in_place(authtext, buffer, tag)
+        }
+    }
+
     /// Generate a new key for the egress symmetric cipher according to Section 4.2
     /// of the Noise Specification. Synchronizing timing of rekey between initiator and
     /// responder is the responsibility of the application, as described in Section 11.3

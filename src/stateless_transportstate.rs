@@ -87,13 +87,67 @@ impl StatelessTransportState {
         message: &[u8],
         payload: &mut [u8],
     ) -> Result<usize, Error> {
-        if payload.len() > MAXMSGLEN {
+        if message.len() > MAXMSGLEN {
             Err(Error::Input)
         } else if self.initiator && self.pattern.is_oneway() {
             Err(StateProblem::OneWay.into())
         } else {
             let cipher = if self.initiator { &self.cipherstates.1 } else { &self.cipherstates.0 };
             cipher.decrypt(nonce, message, payload)
+        }
+    }
+
+    /// Encrypt a message in-place from the plaintext in `buffer`, calculating a
+    /// detached authentication tag using the optional additional data in `authtext`.
+    ///
+    /// Returns the detached authentication tag, which should usually be put
+    /// immediately after the resulting ciphertext in `buffer`.
+    ///
+    /// # Errors
+    ///
+    /// Will result in `Error::Input` if the size of the output exceeds the max message
+    /// length in the Noise Protocol (65535 bytes).
+    pub fn write_message_in_place_detached(
+        &self,
+        nonce: u64,
+        authtext: &[u8],
+        buffer: &mut [u8],
+    ) -> Result<[u8; TAGLEN], Error> {
+         if !self.initiator && self.pattern.is_oneway() {
+            return Err(StateProblem::OneWay.into());
+        } else if buffer.len() + TAGLEN > MAXMSGLEN {
+            return Err(Error::Input);
+        }
+
+        let cipher = if self.initiator { &self.cipherstates.0 } else { &self.cipherstates.1 };
+        cipher.encrypt_ad_in_place(nonce, authtext, buffer)
+    }
+
+    /// Decrypt a noise message in-place in `buffer`, checking against the
+    /// detached authentication tag using the optional additional data in
+    /// `authtext`.
+    ///
+    /// # Errors
+    /// Will result in `Error::Input` if the message is more than 65535 bytes.
+    ///
+    /// Will result in `Error::Decrypt` if the contents couldn't be decrypted and/or the
+    /// authentication tag didn't verify.
+    ///
+    /// Will result in `StateProblem::Exhausted` if the max nonce overflows.
+    pub fn read_message_in_place_detached(
+        &self,
+        nonce: u64,
+        authtext: &[u8],
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error> {
+        if buffer.len() > MAXMSGLEN {
+            Err(Error::Input)
+        } else if self.initiator && self.pattern.is_oneway() {
+            Err(StateProblem::OneWay.into())
+        } else {
+            let cipher = if self.initiator { &self.cipherstates.1 } else { &self.cipherstates.0 };
+            cipher.decrypt_ad_in_place(nonce, authtext, buffer, tag)
         }
     }
 
