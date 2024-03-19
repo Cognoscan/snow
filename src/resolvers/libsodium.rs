@@ -151,37 +151,29 @@ impl Cipher for SodiumChaChaPoly {
             .expect("Can't get key for ChaChaPoly");
     }
 
-    fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize {
+    fn encrypt_in_place(&self, nonce: u64, authtext: &[u8], buffer: &mut [u8]) -> [u8; crate::constants::TAGLEN] {
         let mut nonce_bytes = [0u8; 12];
         LittleEndian::write_u64(&mut nonce_bytes[4..], nonce);
         let nonce = sodium_chacha20poly1305::Nonce(nonce_bytes);
 
-        let buf = sodium_chacha20poly1305::seal(plaintext, Some(authtext), &nonce, &self.key);
-
-        copy_slices!(&buf, out);
-        buf.len()
+        let tag = sodium_chacha20poly1305::seal_detached(buffer, Some(authtext), &nonce, &self.key);
+        tag.0
     }
 
-    fn decrypt(
+    fn decrypt_in_place(
         &self,
         nonce: u64,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
+        buffer: &mut [u8],
+        tag: &[u8; crate::constants::TAGLEN],
+    ) -> Result<(), Error> {
         let mut nonce_bytes = [0u8; 12];
         LittleEndian::write_u64(&mut nonce_bytes[4..], nonce);
         let nonce = sodium_chacha20poly1305::Nonce(nonce_bytes);
 
-        let result = sodium_chacha20poly1305::open(ciphertext, Some(authtext), &nonce, &self.key);
-
-        match result {
-            Ok(ref buf) => {
-                copy_slices!(&buf, out);
-                Ok(buf.len())
-            },
-            Err(_) => Err(Error::Decrypt),
-        }
+        let tag = &sodium_chacha20poly1305::Tag(*tag);
+        sodium_chacha20poly1305::open_detached(buffer, Some(authtext), tag, &nonce, &self.key)
+            .map_err(|_| Error::Decrypt)
     }
 }
 
