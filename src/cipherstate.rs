@@ -25,32 +25,31 @@ impl CipherState {
         self.has_key = true;
     }
 
-    pub fn encrypt_ad(
+    pub fn encrypt_ad_in_place(
         &mut self,
         authtext: &[u8],
-        plaintext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
+        buffer: &mut [u8],
+    ) -> Result<[u8; TAGLEN], Error> {
         if !self.has_key {
             return Err(StateProblem::MissingKeyMaterial.into());
         }
 
         validate_nonce(self.n)?;
-        let len = self.cipher.encrypt(self.n, authtext, plaintext, out);
+        let tag = self.cipher.encrypt_in_place(self.n, authtext, buffer);
 
         // We have validated this will not wrap around.
         self.n += 1;
 
-        Ok(len)
+        Ok(tag)
     }
 
-    pub fn decrypt_ad(
+    pub fn decrypt_ad_in_place(
         &mut self,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
-        if (ciphertext.len() < TAGLEN) || out.len() < (ciphertext.len() - TAGLEN) {
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error> {
+        if buffer.len() < TAGLEN {
             return Err(Error::Decrypt);
         }
 
@@ -59,20 +58,20 @@ impl CipherState {
         }
 
         validate_nonce(self.n)?;
-        let len = self.cipher.decrypt(self.n, authtext, ciphertext, out)?;
+        self.cipher.decrypt_in_place(self.n, authtext, buffer, tag)?;
 
         // We have validated this will not wrap around.
         self.n += 1;
 
-        Ok(len)
+        Ok(())
     }
 
-    pub fn encrypt(&mut self, plaintext: &[u8], out: &mut [u8]) -> Result<usize, Error> {
-        self.encrypt_ad(&[0u8; 0], plaintext, out)
+    pub fn encrypt_in_place(&mut self, buffer: &mut [u8]) -> Result<[u8; TAGLEN], Error> {
+        self.encrypt_ad_in_place(&[0u8; 0], buffer)
     }
 
-    pub fn decrypt(&mut self, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, Error> {
-        self.decrypt_ad(&[0u8; 0], ciphertext, out)
+    pub fn decrypt_in_place(&mut self, buffer: &mut [u8], tag: &[u8; TAGLEN]) -> Result<(), Error> {
+        self.decrypt_ad_in_place(&[0u8; 0], buffer, tag)
     }
 
     pub fn rekey(&mut self) {
@@ -126,30 +125,29 @@ pub(crate) struct StatelessCipherState {
 }
 
 impl StatelessCipherState {
-    pub fn encrypt_ad(
+    pub fn encrypt_ad_in_place(
         &self,
         nonce: u64,
         authtext: &[u8],
-        plaintext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
+        buffer: &mut [u8],
+    ) -> Result<[u8; TAGLEN], Error> {
         if !self.has_key {
             return Err(StateProblem::MissingKeyMaterial.into());
         }
 
         validate_nonce(nonce)?;
 
-        Ok(self.cipher.encrypt(nonce, authtext, plaintext, out))
+        Ok(self.cipher.encrypt_in_place(nonce, authtext, buffer))
     }
 
-    pub fn decrypt_ad(
+    pub fn decrypt_ad_in_place(
         &self,
         nonce: u64,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
-        if (ciphertext.len() < TAGLEN) || out.len() < (ciphertext.len() - TAGLEN) {
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error> {
+        if buffer.len() < TAGLEN {
             return Err(Error::Decrypt);
         }
 
@@ -159,15 +157,15 @@ impl StatelessCipherState {
 
         validate_nonce(nonce)?;
 
-        self.cipher.decrypt(nonce, authtext, ciphertext, out)
+        self.cipher.decrypt_in_place(nonce, authtext, buffer, tag)
     }
 
-    pub fn encrypt(&self, nonce: u64, plaintext: &[u8], out: &mut [u8]) -> Result<usize, Error> {
-        self.encrypt_ad(nonce, &[], plaintext, out)
+    pub fn encrypt_in_place(&self, nonce: u64, buffer: &mut [u8]) -> Result<[u8; TAGLEN], Error> {
+        self.encrypt_ad_in_place(nonce, &[], buffer)
     }
 
-    pub fn decrypt(&self, nonce: u64, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, Error> {
-        self.decrypt_ad(nonce, &[], ciphertext, out)
+    pub fn decrypt_in_place(&self, nonce: u64, buffer: &mut [u8], tag: &[u8; TAGLEN]) -> Result<(), Error> {
+        self.decrypt_ad_in_place(nonce, &[], buffer, tag)
     }
 
     pub fn rekey(&mut self) {

@@ -184,46 +184,41 @@ impl Cipher for CipherAesGcm {
         copy_slices!(key, &mut self.key);
     }
 
-    fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize {
-        let aead = aes_gcm::Aes256Gcm::new(&self.key.into());
-
-        let mut nonce_bytes = [0u8; 12];
-        copy_slices!(nonce.to_be_bytes(), &mut nonce_bytes[4..]);
-
-        copy_slices!(plaintext, out);
-
-        let tag = aead
-            .encrypt_in_place_detached(&nonce_bytes.into(), authtext, &mut out[0..plaintext.len()])
-            .expect("Encryption failed!");
-
-        copy_slices!(tag, &mut out[plaintext.len()..]);
-
-        plaintext.len() + TAGLEN
-    }
-
-    fn decrypt(
+    fn encrypt_in_place(
         &self,
         nonce: u64,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
+        buffer: &mut [u8]
+    ) -> [u8; TAGLEN] {
         let aead = aes_gcm::Aes256Gcm::new(&self.key.into());
 
         let mut nonce_bytes = [0u8; 12];
         copy_slices!(nonce.to_be_bytes(), &mut nonce_bytes[4..]);
 
-        let message_len = ciphertext.len() - TAGLEN;
+        aead
+            .encrypt_in_place_detached(&nonce_bytes.into(), authtext, buffer)
+            .expect("Encryption failed!")
+            .into()
+    }
 
-        copy_slices!(ciphertext[..message_len], out);
+    fn decrypt_in_place(
+        &self,
+        nonce: u64,
+        authtext: &[u8],
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error> {
+        let aead = aes_gcm::Aes256Gcm::new(&self.key.into());
+
+        let mut nonce_bytes = [0u8; 12];
+        copy_slices!(nonce.to_be_bytes(), &mut nonce_bytes[4..]);
 
         aead.decrypt_in_place_detached(
             &nonce_bytes.into(),
             authtext,
-            &mut out[..message_len],
-            ciphertext[message_len..].into(),
+            buffer,
+            tag.into(),
         )
-        .map(|()| message_len)
         .map_err(|_| Error::Decrypt)
     }
 }
@@ -237,45 +232,39 @@ impl Cipher for CipherChaChaPoly {
         copy_slices!(key, &mut self.key);
     }
 
-    fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize {
-        let mut nonce_bytes = [0u8; 12];
-        copy_slices!(nonce.to_le_bytes(), &mut nonce_bytes[4..]);
-
-        copy_slices!(plaintext, out);
-
-        let tag = ChaCha20Poly1305::new(&self.key.into())
-            .encrypt_in_place_detached(&nonce_bytes.into(), authtext, &mut out[0..plaintext.len()])
-            .unwrap();
-
-        copy_slices!(tag, &mut out[plaintext.len()..]);
-
-        plaintext.len() + tag.len()
-    }
-
-    fn decrypt(
+    fn encrypt_in_place(
         &self,
         nonce: u64,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error> {
+        buffer: &mut [u8],
+    ) -> [u8; TAGLEN] {
         let mut nonce_bytes = [0u8; 12];
         copy_slices!(nonce.to_le_bytes(), &mut nonce_bytes[4..]);
 
-        let message_len = ciphertext.len() - TAGLEN;
+        ChaCha20Poly1305::new(&self.key.into())
+            .encrypt_in_place_detached(&nonce_bytes.into(), authtext, buffer)
+            .unwrap()
+            .into()
+    }
 
-        copy_slices!(ciphertext[..message_len], out);
+    fn decrypt_in_place(
+        &self,
+        nonce: u64,
+        authtext: &[u8],
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error> {
+        let mut nonce_bytes = [0u8; 12];
+        copy_slices!(nonce.to_le_bytes(), &mut nonce_bytes[4..]);
 
         ChaCha20Poly1305::new(&self.key.into())
             .decrypt_in_place_detached(
                 &nonce_bytes.into(),
                 authtext,
-                &mut out[..message_len],
-                ciphertext[message_len..].into(),
+                buffer,
+                tag.into()
             )
-            .map_err(|_| Error::Decrypt)?;
-
-        Ok(message_len)
+            .map_err(|_| Error::Decrypt)
     }
 }
 
@@ -289,51 +278,40 @@ impl Cipher for CipherXChaChaPoly {
         copy_slices!(key, &mut self.key);
     }
 
-    fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize {
+    fn encrypt(&self, nonce: u64, authtext: &[u8], buffer: &mut [u8]) {
         let mut nonce_bytes = [0u8; 24];
         copy_slices!(&nonce.to_le_bytes(), &mut nonce_bytes[16..]);
 
-        copy_slices!(plaintext, out);
-
-        let tag = XChaCha20Poly1305::new(&self.key.into())
-            .encrypt_in_place_detached(&nonce_bytes.into(), authtext, &mut out[0..plaintext.len()])
-            .unwrap();
-
-        copy_slices!(tag, &mut out[plaintext.len()..]);
-
-        plaintext.len() + tag.len()
+        XChaCha20Poly1305::new(&self.key.into())
+            .encrypt_in_place_detached(&nonce_bytes.into(), authtext, buffer)
+            .unwrap()
+            .into()
     }
 
     fn decrypt(
         &self,
         nonce: u64,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
     ) -> Result<usize, Error> {
         let mut nonce_bytes = [0u8; 24];
         copy_slices!(&nonce.to_le_bytes(), &mut nonce_bytes[16..]);
-
-        let message_len = ciphertext.len() - TAGLEN;
-
-        copy_slices!(ciphertext[..message_len], out);
 
         XChaCha20Poly1305::new(&self.key.into())
             .decrypt_in_place_detached(
                 &nonce_bytes.into(),
                 authtext,
-                &mut out[..message_len],
-                ciphertext[message_len..].into(),
+                buffer,
+                tag.into()
             )
-            .map_err(|_| Error::Decrypt)?;
-
-        Ok(message_len)
+            .map_err(|_| Error::Decrypt)
     }
 }
 
 impl Default for HashSHA256 {
     fn default() -> HashSHA256 {
-        HashSHA256 { hasher: Sha256::new() }
+        HashSHA256 { hasher: Sha256::default() }
     }
 }
 
@@ -351,7 +329,7 @@ impl Hash for HashSHA256 {
     }
 
     fn reset(&mut self) {
-        self.hasher = Sha256::new();
+        self.hasher = Sha256::default();
     }
 
     fn input(&mut self, data: &[u8]) {
@@ -366,7 +344,7 @@ impl Hash for HashSHA256 {
 
 impl Default for HashSHA512 {
     fn default() -> HashSHA512 {
-        HashSHA512 { hasher: Sha512::new() }
+        HashSHA512 { hasher: Sha512::default() }
     }
 }
 
@@ -384,7 +362,7 @@ impl Hash for HashSHA512 {
     }
 
     fn reset(&mut self) {
-        self.hasher = Sha512::new();
+        self.hasher = Sha512::default();
     }
 
     fn input(&mut self, data: &[u8]) {
@@ -619,40 +597,42 @@ mod tests {
         // Test Case 13
         let key = [0u8; 32];
         let nonce = 0u64;
-        let plaintext = [0u8; 0];
         let authtext = [0u8; 0];
-        let mut ciphertext = [0u8; 16];
+        let mut ciphertext = [0u8; TAGLEN];
         let mut cipher1 = CipherAesGcm::default();
         cipher1.set(&key);
-        cipher1.encrypt(nonce, &authtext, &plaintext, &mut ciphertext);
+        cipher1.encrypt_in_place(nonce, &authtext, &mut ciphertext);
         assert!(hex::encode(ciphertext) == "530f8afbc74536b9a963b4f1c4cb738b");
 
-        let mut resulttext = [0u8; 1];
         let mut cipher2 = CipherAesGcm::default();
         cipher2.set(&key);
-        cipher2.decrypt(nonce, &authtext, &ciphertext, &mut resulttext).unwrap();
-        assert!(resulttext[0] == 0);
+        cipher2.decrypt_in_place(nonce, &authtext, &mut [], &ciphertext).unwrap();
         ciphertext[0] ^= 1;
-        assert!(cipher2.decrypt(nonce, &authtext, &ciphertext, &mut resulttext).is_err());
+        assert!(cipher2.decrypt_in_place(nonce, &authtext, &mut [], &ciphertext).is_err());
 
         // Test Case 14
         let plaintext2 = [0u8; 16];
-        let mut ciphertext2 = [0u8; 32];
+        let mut ciphertext2 = [0u8; 16+TAGLEN];
         let mut cipher3 = CipherAesGcm::default();
         cipher3.set(&key);
-        cipher3.encrypt(nonce, &authtext, &plaintext2, &mut ciphertext2);
+        cipher3.encrypt_in_place(nonce, &authtext, &mut ciphertext2);
         assert!(
             hex::encode(ciphertext2)
                 == "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919"
         );
 
-        let mut resulttext2 = [1u8; 16];
+        let mut resulttext2 = ciphertext2.clone();
         let mut cipher4 = CipherAesGcm::default();
         cipher4.set(&key);
-        cipher4.decrypt(nonce, &authtext, &ciphertext2, &mut resulttext2).unwrap();
+        let (resulttext2, tag) = resulttext2.split_at_mut(16);
+        let tag: &[u8; 16] = tag.as_ref().try_into().unwrap();
+        cipher4.decrypt_in_place(nonce, &authtext, resulttext2, tag).unwrap();
         assert!(plaintext2 == resulttext2);
-        ciphertext2[0] ^= 1;
-        assert!(cipher4.decrypt(nonce, &authtext, &ciphertext2, &mut resulttext2).is_err());
+        let mut resulttext2 = ciphertext2.clone();
+        resulttext2[0] ^= 1;
+        let (resulttext2, tag) = resulttext2.split_at_mut(16);
+        let tag: &[u8; 16] = tag.as_ref().try_into().unwrap();
+        assert!(cipher4.decrypt_in_place(nonce, &authtext, resulttext2, tag).is_err());
     }
 
     #[test]
@@ -662,18 +642,17 @@ mod tests {
         let nonce = 0u64;
         let plaintext = [0u8; 0];
         let authtext = [0u8; 0];
-        let mut ciphertext = [0u8; 16];
+        let mut ciphertext = [0u8; TAGLEN];
         let mut cipher1 = CipherChaChaPoly::default();
         cipher1.set(&key);
-        cipher1.encrypt(nonce, &authtext, &plaintext, &mut ciphertext);
+        cipher1.encrypt_in_place(nonce, &authtext, &mut ciphertext);
 
-        let mut resulttext = [0u8; 1];
+        let mut resulttext = ciphertext.clone();
         let mut cipher2 = CipherChaChaPoly::default();
         cipher2.set(&key);
-        cipher2.decrypt(nonce, &authtext, &ciphertext, &mut resulttext).unwrap();
-        assert!(resulttext[0] == 0);
+        cipher2.decrypt_in_place(nonce, &authtext, &mut [], &ciphertext).unwrap();
         ciphertext[0] ^= 1;
-        assert!(cipher2.decrypt(nonce, &authtext, &ciphertext, &mut resulttext).is_err());
+        assert!(cipher2.decrypt_in_place(nonce, &authtext, &mut [], &ciphertext).is_err());
     }
 
     #[test]
@@ -683,15 +662,17 @@ mod tests {
         let nonce = 0u64;
         let plaintext = [0x34u8; 117];
         let authtext = [0u8; 0];
-        let mut ciphertext = [0u8; 133];
+        let mut ciphertext = [0x34u8; 133];
         let mut cipher1 = CipherChaChaPoly::default();
         cipher1.set(&key);
-        cipher1.encrypt(nonce, &authtext, &plaintext, &mut ciphertext);
+        cipher1.encrypt_in_place(nonce, &authtext, &mut ciphertext);
 
-        let mut resulttext = [0u8; 117];
+        let mut resulttext = ciphertext.clone();
+        let (resulttext, tag) = resulttext.split_at_mut(resulttext.len()-16);
+        let tag: &[u8; 16] = tag.as_ref().try_into().unwrap();
         let mut cipher2 = CipherChaChaPoly::default();
         cipher2.set(&key);
-        cipher2.decrypt(nonce, &authtext, &ciphertext, &mut resulttext).unwrap();
+        cipher2.decrypt_in_place(nonce, &authtext, resulttext, tag).unwrap();
         assert!(hex::encode(resulttext) == hex::encode(plaintext));
     }
 
@@ -703,16 +684,18 @@ mod tests {
         let nonce = 0u64;
         let plaintext = [0x34u8; 117];
         let authtext = [0u8; 0];
-        let mut ciphertext = [0u8; 133];
+        let mut ciphertext = [0x34u8; 133];
         let mut cipher1 = CipherXChaChaPoly::default();
         cipher1.set(&key);
-        cipher1.encrypt(nonce, &authtext, &plaintext, &mut ciphertext);
+        cipher1.encrypt_in_place(nonce, &authtext, &mut ciphertext);
 
-        let mut resulttext = [0u8; 117];
+        let mut resulttext = ciphertext.clone();
+        let (resulttext, tag) = resulttext.split_at_mut(resulttext.len()-16);
+        let tag: &[u8; 16] = tag.as_ref().try_into().unwrap();
         let mut cipher2 = CipherXChaChaPoly::default();
         cipher2.set(&key);
-        cipher2.decrypt(nonce, &authtext, &ciphertext, &mut resulttext).unwrap();
-        assert!(hex::encode(resulttext.to_vec()) == hex::encode(plaintext.to_vec()));
+        cipher2.decrypt_in_place(nonce, &authtext, resulttext, tag).unwrap();
+        assert!(hex::encode(resulttext) == hex::encode(plaintext));
     }
 
     #[test]
@@ -747,18 +730,17 @@ mod tests {
         let tag = Vec::<u8>::from_hex("eead9d67890cbb22392336fea1851f38").unwrap();
         let authtext = Vec::<u8>::from_hex("f33388860000000000004e91").unwrap();
         let mut combined_text = [0u8; 1024];
-        let mut out = [0u8; 1024];
         copy_slices!(&ciphertext, &mut combined_text);
         copy_slices!(&tag[0..TAGLEN], &mut combined_text[ciphertext.len()..]);
 
         let mut cipher = CipherChaChaPoly::default();
         cipher.set(&key);
         cipher
-            .decrypt(
+            .decrypt_in_place(
                 nonce,
                 &authtext,
-                &combined_text[..ciphertext.len() + TAGLEN],
-                &mut out[..ciphertext.len()],
+                &mut combined_text[..ciphertext.len()],
+                &combined_text[ciphertext.len()..ciphertext.len()+TAGLEN].try_into().unwrap(),
             )
             .unwrap();
         let desired_plaintext = "496e7465726e65742d44726166747320\
@@ -778,7 +760,7 @@ mod tests {
                                  6d206f74686572207468616e20617320\
                                  2fe2809c776f726b20696e2070726f67\
                                  726573732e2fe2809d";
-        assert!(hex::encode(&out[..ciphertext.len()]) == desired_plaintext);
+        assert!(hex::encode(&combined_text[..ciphertext.len()]) == desired_plaintext);
     }
 
     #[test]

@@ -47,27 +47,28 @@ pub trait Cipher: Send + Sync {
     /// Set the key
     fn set(&mut self, key: &[u8; CIPHERKEYLEN]);
 
-    /// Encrypt (with associated data) a given plaintext.
-    fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize;
+    /// Encrypt (with associated data) a given plaintext in place, returning the
+    /// 16 byte authentication tag.
+    #[must_use]
+    fn encrypt_in_place(&self, nonce: u64, authtext: &[u8], buffer: &mut [u8]) -> [u8; TAGLEN];
 
-    /// Decrypt (with associated data) a given ciphertext.
+    /// Decrypt (with associated data) a given ciphertext in place.
     ///
     /// # Errors
-    /// Returns `Error::Decrypt` in the event that the decryption failed.
-    fn decrypt(
+    /// Returns `Error:Decrypt` in the event that the decryption failed
+    fn decrypt_in_place(
         &self,
         nonce: u64,
         authtext: &[u8],
-        ciphertext: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, Error>;
+        buffer: &mut [u8],
+        tag: &[u8; TAGLEN],
+    ) -> Result<(), Error>;
 
     /// Rekey according to Section 4.2 of the Noise Specification, with a default
     /// implementation guaranteed to be secure for all ciphers.
     fn rekey(&mut self) {
         let mut ciphertext = [0; CIPHERKEYLEN + TAGLEN];
-        let ciphertext_len = self.encrypt(u64::MAX, &[], &[0; CIPHERKEYLEN], &mut ciphertext);
-        assert_eq!(ciphertext_len, ciphertext.len());
+        let ciphertext_len = self.encrypt_in_place(u64::MAX, &[], &mut ciphertext);
 
         // TODO(mcginty): use `split_array_ref` once stable to avoid memory inefficiency
         let mut key = [0u8; CIPHERKEYLEN];
