@@ -64,15 +64,49 @@ pub trait Cipher: Send + Sync {
         tag: &[u8; TAGLEN],
     ) -> Result<(), Error>;
 
+    /// Encrypt (with associated data) a given plaintext, with a default
+    /// implementation that relies on [`encrypt_in_place`].
+    fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize {
+        copy_slices!(plaintext, out);
+        let tag = self.encrypt_in_place(nonce, authtext, &mut out[..plaintext.len()]);
+        copy_slices!(tag, &mut out[plaintext.len()..]);
+        plaintext.len() + tag.len()
+    }
+
+    /// Decrypt (with associated data) a given ciphertext, with a default
+    /// implementation that relies on [`decrypt_in_place`].
+    ///
+    /// # Errors
+    /// Returns `Error::Decrypt` in the event that the decryption failed.
+    fn decrypt(
+        &self,
+        nonce: u64,
+        authtext: &[u8],
+        ciphertext: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        // Split out the encrypted plaintext and the tag
+        if ciphertext.len() < TAGLEN { return Err(Error::Decrypt); }
+        let message_len = ciphertext.len() - TAGLEN;
+        let (ciphertext, tag) = ciphertext.split_at(message_len);
+        let tag: &[u8; 16] = tag.try_into().unwrap();
+
+        // Copy the encrypted data over to the output
+        if message_len > out.len() { return Err(Error::Decrypt); }
+        copy_slices!(ciphertext[..message_len], out);
+
+        // Perform the actual decryption
+        self.decrypt_in_place(nonce, authtext, &mut out[..message_len], tag)?;
+
+        Ok(message_len)
+    }
+
+
     /// Rekey according to Section 4.2 of the Noise Specification, with a default
     /// implementation guaranteed to be secure for all ciphers.
     fn rekey(&mut self) {
-        let mut ciphertext = [0; CIPHERKEYLEN + TAGLEN];
-        let ciphertext_len = self.encrypt_in_place(u64::MAX, &[], &mut ciphertext);
-
-        // TODO(mcginty): use `split_array_ref` once stable to avoid memory inefficiency
         let mut key = [0u8; CIPHERKEYLEN];
-        key.copy_from_slice(&ciphertext[..CIPHERKEYLEN]);
+        let _tag = self.encrypt_in_place(u64::MAX, &[], &mut key);
 
         self.set(&key);
     }
